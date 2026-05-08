@@ -1,5 +1,4 @@
 const http = require('http');
-const https = require('https');
 
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -9,8 +8,7 @@ const server = http.createServer((req, res) => {
   const arrival = url.searchParams.get('arrival') || '2026-08-10';
   const departure = url.searchParams.get('departure') || '2026-08-17';
   const adults = url.searchParams.get('adults') || '2';
-  const children = url.searchParams.get('children') || '0';
-  const type = url.searchParams.get('type') || '1';
+  const children = url.searchParams.get('children') || '1';
 
   const xml = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
@@ -22,12 +20,12 @@ const server = http.createServer((req, res) => {
   </soap:Header>
   <soap:Body>
     <SearchHotel xmlns="http://tempuri.org/">
-      <type>${type}</type>
       <arrival>${arrival}</arrival>
       <departure>${departure}</departure>
       <paxlist>
         <adults>${adults}</adults>
         <child>${children}</child>
+        <childage><int>8</int></childage>
       </paxlist>
     </SearchHotel>
   </soap:Body>
