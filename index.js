@@ -13,7 +13,7 @@ const server = http.createServer((req, res) => {
   const xml = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Header>
-    <AuthHeader xmlns="http://tempuri.org/">
+    <AuthHeader xmlns="http://integrate.dev.enix.travel/">
       <UserName>testnewXML</UserName>
       <Password>testnewXML2023$</Password>
     </AuthHeader>
