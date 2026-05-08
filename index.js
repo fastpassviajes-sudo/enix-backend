@@ -11,23 +11,23 @@ const server = http.createServer((req, res) => {
   const children = url.searchParams.get('children') || '1';
 
   const xml = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Header>
-    <tem:AuthHeader>
-      <tem:UserName>testnewXML</tem:UserName>
-      <tem:Password>testnewXML2023$</tem:Password>
-    </tem:AuthHeader>
+    <AuthHeader xmlns="http://tempuri.org/">
+      <UserName>testnewXML</UserName>
+      <Password>testnewXML2023$</Password>
+    </AuthHeader>
   </soap:Header>
   <soap:Body>
-    <tem:SearchHotel>
-      <tem:arrival>${arrival}</tem:arrival>
-      <tem:departure>${departure}</tem:departure>
-      <tem:paxlist>
-        <tem:adults>${adults}</tem:adults>
-        <tem:child>${children}</tem:child>
-        <tem:childage><tem:int>8</tem:int></tem:childage>
-      </tem:paxlist>
-    </tem:SearchHotel>
+    <SearchHotel xmlns="http://tempuri.org/">
+      <arrival>${arrival}</arrival>
+      <departure>${departure}</departure>
+      <paxlist>
+        <adults>${adults}</adults>
+        <child>${children}</child>
+        <childage><int>8</int></childage>
+      </paxlist>
+    </SearchHotel>
   </soap:Body>
 </soap:Envelope>`;
 
@@ -37,8 +37,9 @@ const server = http.createServer((req, res) => {
     method: 'POST',
     headers: {
       'Content-Type': 'text/xml; charset=utf-8',
-      'SOAPAction': 'http://tempuri.org/SearchHotel',
-      'Content-Length': Buffer.byteLength(xml)
+      'SOAPAction': '"http://tempuri.org/SearchHotel"',
+      'Content-Length': Buffer.byteLength(xml),
+      'Host': 'integrate.dev.enix.travel'
     }
   };
 
