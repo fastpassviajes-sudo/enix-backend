@@ -19,25 +19,30 @@ const server = http.createServer((req, res) => {
     </AuthHeader>
   </soap:Header>
   <soap:Body>
-    <SearchHotel xmlns="http://tempuri.org/">
+    <SearchHotelAdvanced xmlns="http://tempuri.org/">
       <arrival>${arrival}</arrival>
       <departure>${departure}</departure>
-      <paxlist>
-        <adults>${adults}</adults>
-        <child>${children}</child>
-        <childage><int>8</int></childage>
-      </paxlist>
-    </SearchHotel>
+      <cityid>1</cityid>
+      <pagesize>10</pagesize>
+      <targetpage>1</targetpage>
+      <roomList>
+        <room>
+          <adults>${adults}</adults>
+          <child>${children}</child>
+          <childage><int>8</int></childage>
+        </room>
+      </roomList>
+    </SearchHotelAdvanced>
   </soap:Body>
 </soap:Envelope>`;
 
   const options = {
     hostname: 'integrate.dev.enix.travel',
-    path: '/Service_Parks.asmx',
+    path: '/Service_Hotel.asmx',
     method: 'POST',
     headers: {
       'Content-Type': 'text/xml; charset=utf-8',
-      'SOAPAction': '"http://tempuri.org/SearchHotel"',
+      'SOAPAction': '"http://tempuri.org/SearchHotelAdvanced"',
       'Content-Length': Buffer.byteLength(xml),
       'Host': 'integrate.dev.enix.travel'
     }
