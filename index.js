@@ -1,68 +1,112 @@
-const http = require('http');
+// =====================================================================
+// MAGIC TRAVELERS - Backend ENIX (Render.com)
+// Conecta con ENIX usando el AuthHeader correcto
+// =====================================================================
 
-const server = http.createServer((req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Content-Type', 'application/json');
+const express = require('express');
+const axios = require('axios');
 
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const arrival = url.searchParams.get('arrival') || '2026-08-10';
-  const departure = url.searchParams.get('departure') || '2026-08-17';
-  const adults = url.searchParams.get('adults') || '2';
-  const children = url.searchParams.get('children') || '1';
+const app = express();
+app.use(express.json());
 
-  const xml = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+// =====================================================================
+// CONFIGURACIÓN ENIX (desde variables de entorno)
+// =====================================================================
+const ENIX_CONFIG = {
+  endpoint: process.env.ENIX_ENDPOINT || 'http://integrate.dev.enix.travel/Service_Parks.asmx',
+  username: process.env.ENIX_USERNAME || 'testnewXML',
+  password: process.env.ENIX_PASSWORD || 'testnewXML2023$',
+  namespace: 'http://tempuri.org/'
+};
+
+// =====================================================================
+// HELPER: Escapa caracteres XML especiales
+// =====================================================================
+function escapeXml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+// =====================================================================
+// HELPER: Arma el SOAP envelope con AuthHeader de ENIX
+// =====================================================================
+function buildSoapEnvelope(methodName, bodyContent = '') {
+  const body = bodyContent
+    ? `<${methodName} xmlns="${ENIX_CONFIG.namespace}">${bodyContent}</${methodName}>`
+    : `<${methodName} xmlns="${ENIX_CONFIG.namespace}" />`;
+
+  return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Header>
-    <AuthHeader xmlns="http://tempuri.org/">
-      <UserName>testnewXML</UserName>
-      <Password>testnewXML2023$</Password>
+    <AuthHeader xmlns="${ENIX_CONFIG.namespace}">
+      <Username>${escapeXml(ENIX_CONFIG.username)}</Username>
+      <Password>${escapeXml(ENIX_CONFIG.password)}</Password>
     </AuthHeader>
   </soap:Header>
   <soap:Body>
-    <SearchHotelAdvanced xmlns="http://tempuri.org/">
-      <arrival>${arrival}</arrival>
-      <departure>${departure}</departure>
-      <cityid>1</cityid>
-      <pagesize>10</pagesize>
-      <targetpage>1</targetpage>
-      <roomList>
-        <room>
-          <adults>${adults}</adults>
-          <child>${children}</child>
-          <childage><int>8</int></childage>
-        </room>
-      </roomList>
-    </SearchHotelAdvanced>
+    ${body}
   </soap:Body>
 </soap:Envelope>`;
+}
 
-  const options = {
-    hostname: 'integrate.dev.enix.travel',
-    path: '/Service_Hotel.asmx',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'text/xml; charset=utf-8',
-      'SOAPAction': '"http://tempuri.org/SearchHotelAdvanced"',
-      'Content-Length': Buffer.byteLength(xml),
-      'Host': 'integrate.dev.enix.travel'
-    }
-  };
+// =====================================================================
+// HELPER: Llama a un método SOAP de ENIX
+// =====================================================================
+async function callEnix(methodName, bodyContent = '') {
+  const soapBody = buildSoapEnvelope(methodName, bodyContent);
 
-  const enixReq = http.request(options, (enixRes) => {
-    let data = '';
-    enixRes.on('data', (chunk) => data += chunk);
-    enixRes.on('end', () => {
-      res.end(JSON.stringify({ xml: data }));
-    });
-  });
+  try {
+    const response = await axios.post(
+      ENIX_CONFIG.endpoint,
+      soapBody,
+      {
+        headers: {
+          'Content-Type': 'text/xml; charset=utf-8',
+          'SOAPAction': `"${ENIX_CONFIG.namespace}${methodName}"`,
+        },
+        timeout: 30000,
+      }
+    );
 
-  enixReq.on('error', (e) => {
-    res.end(JSON.stringify({ error: e.message }));
-  });
+    return {
+      success: true,
+      status: response.status,
+      data: response.data,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      status: error.response?.status || 500,
+      error: error.message,
+      details: error.response?.data || null,
+    };
+  }
+}
 
-  enixReq.write(xml);
-  enixReq.end();
+// =====================================================================
+// ENDPOINTS
+// =====================================================================
+
+// Healthcheck — verifica que el server esté vivo
+app.get('/', (req, res) => {
+  res.send('Magic Travelers ENIX Backend OK - ' + new Date().toISOString());
 });
 
+// Test de conexión a ENIX — devuelve lista de hoteles Disney/Universal
+app.get('/api/test-connection', async (req, res) => {
+  const result = await callEnix('GetHotelMaster');
+  res.json(result);
+});
+
+// =====================================================================
+// ARRANQUE DEL SERVIDOR
+// =====================================================================
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Magic Travelers backend listening on port ${PORT}`);
+  console.log(`ENIX endpoint: ${ENIX_CONFIG.endpoint}`);
+});
