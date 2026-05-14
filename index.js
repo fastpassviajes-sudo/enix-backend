@@ -1,5 +1,5 @@
 // =====================================================================
-// MAGIC TRAVELERS - Backend ENIX + Claude AI v3.1 (Full Fix)
+// MAGIC TRAVELERS - Backend ENIX + Claude AI v3 (VERSIÓN PREVIA)
 // =====================================================================
 const express = require('express');
 const axios = require('axios');
@@ -30,8 +30,8 @@ const ENIX_CONFIG = {
   namespace: 'http://tempuri.org/',
   margin: parseFloat(process.env.MAGIC_MARGIN || '1.10'),
   orlandoCityId: parseInt(process.env.ORLANDO_CITY_ID || '729'),
-  usaCountryId: 0,
-  orlandoZoneId: 0,
+  usaCountryId: parseInt(process.env.USA_COUNTRY_ID || '0'),
+  orlandoZoneId: parseInt(process.env.ORLANDO_ZONE_ID || '0'),
 };
 
 const MAGIC_CONFIG = {
@@ -43,7 +43,7 @@ const MAGIC_CONFIG = {
 const anthropic = new Anthropic();
 
 // ---------------------------------------------------------------------
-// HELPERS
+// HELPERS XML
 // ---------------------------------------------------------------------
 function escapeXml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -66,7 +66,9 @@ function extractFirst(xml, tag) {
 // SOAP LOGIC
 // ---------------------------------------------------------------------
 function buildSoap11(methodName, bodyContent = '') {
-  const body = bodyContent ? `<${methodName} xmlns="${ENIX_CONFIG.namespace}">${bodyContent}</${methodName}>` : `<${methodName} xmlns="${ENIX_CONFIG.namespace}" />`;
+  const body = bodyContent
+    ? `<${methodName} xmlns="${ENIX_CONFIG.namespace}">${bodyContent}</${methodName}>`
+    : `<${methodName} xmlns="${ENIX_CONFIG.namespace}" />`;
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Header>
@@ -88,9 +90,7 @@ function buildSoap12(methodName, bodyContent = '') {
       <tem:Password>${escapeXml(ENIX_CONFIG.password)}</tem:Password>
     </tem:AuthHeader>
   </soap:Header>
-  <soap:Body>
-    <tem:${methodName}>${bodyContent}</tem:${methodName}>
-  </soap:Body>
+  <soap:Body><tem:${methodName}>${bodyContent}</tem:${methodName}></soap:Body>
 </soap:Envelope>`;
 }
 
@@ -159,13 +159,13 @@ function parseSearchHotelAdvancedV1(xml) {
 }
 
 // ---------------------------------------------------------------------
-// CORE FUNCTIONS
+// CACHE & CORE
 // ---------------------------------------------------------------------
 let hotelsCache = { data: null, timestamp: 0 };
 
 async function getHotelsList() {
   if (hotelsCache.data && Date.now() - hotelsCache.timestamp < 3600000) return hotelsCache.data;
-  const body = `<countryId>0</countryId><cityid>${ENIX_CONFIG.orlandoCityId}</cityid><zoneid>0</zoneid>`;
+  const body = `<countryId>${ENIX_CONFIG.usaCountryId}</countryId><cityid>${ENIX_CONFIG.orlandoCityId}</cityid><zoneid>${ENIX_CONFIG.orlandoZoneId}</zoneid>`;
   const result = await callEnixParks('GetHotelMaster', body);
   if (result.success) {
     hotelsCache = { data: parseHotelMasterList(result.data), timestamp: Date.now() };
@@ -179,15 +179,7 @@ async function searchHotelsAdvanced({ cityId = ENIX_CONFIG.orlandoCityId, arriva
   const hotelListXml = hotelList.map(id => `<tem:int>${parseInt(id)}</tem:int>`).join('');
 
   const body = `
-      <tem:hoteltypeid>1</tem:hoteltypeid>
-      <tem:countryid>0</tem:countryid>
-      <tem:stateid>0</tem:stateid>
       <tem:cityid>${parseInt(cityId)}</tem:cityid>
-      <tem:zoneid>0</tem:zoneid>
-      <tem:category>0</tem:category>
-      <tem:pricefrom>0</tem:pricefrom>
-      <tem:priceto>0</tem:priceto>
-      <tem:hotelname></tem:hotelname>
       <tem:arrival>${fmtDate(arrival)}</tem:arrival>
       <tem:departure>${fmtDate(departure)}</tem:departure>
       <tem:qty>1</tem:qty>
@@ -196,12 +188,8 @@ async function searchHotelsAdvanced({ cityId = ENIX_CONFIG.orlandoCityId, arriva
          <tem:child>${parseInt(children)}</tem:child>
          <tem:childage>${childAgesXml}</tem:childage>
       </tem:paxlist>
-      <tem:pagesize>100</tem:pagesize>
-      <tem:targetpage>1</tem:targetpage>
-      <tem:sort>0</tem:sort>
       <tem:availableonly>1</tem:availableonly>
-      <tem:hotellist>${hotelListXml}</tem:hotellist>
-      <tem:localOnly>false</tem:localOnly>`;
+      <tem:hotellist>${hotelListXml}</tem:hotellist>`;
 
   const result = await callEnixHotels('SearchHotelAdvancedV1', body);
   if (!result.success) return result;
@@ -211,7 +199,7 @@ async function searchHotelsAdvanced({ cityId = ENIX_CONFIG.orlandoCityId, arriva
 // ---------------------------------------------------------------------
 // ENDPOINTS
 // ---------------------------------------------------------------------
-app.get('/api/diag', async (req, res) => {
+app.get('/api/diag', (req, res) => {
   res.json({ cacheCount: hotelsCache.data?.length || 0, config: ENIX_CONFIG });
 });
 
@@ -220,10 +208,10 @@ app.post('/api/search', async (req, res) => {
   res.json(result);
 });
 
-// (Aquí iría el resto de endpoints como /api/chat que ya tenés)
+// Endpoint /api/chat (Igual a como estaba antes)
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log(`Backend Magic Travelers v3.1 listo en puerto ${PORT}`);
+  console.log(`Magic Travelers backend v3 listening on port ${PORT}`);
   await getHotelsList();
 });
