@@ -76,18 +76,19 @@ function extractFirst(xml, tag) {
  
 // ---------------------------------------------------------------------
 // SOAP 1.1 (Service_Parks.asmx)
-// IMPORTANTE: Usamos prefijo "tem:" en todos los elementos del namespace
-// tempuri.org porque ENIX/SOAP UI lo manda así y algunos servicios
-// ASP.NET viejos validan literalmente la sintaxis del prefijo.
+// CLAVE: Todos los elementos del body deben estar bajo el namespace
+// tempuri.org. Lo hacemos declarando xmlns default en el método para que
+// los hijos hereden el namespace sin necesidad de poner tem: en cada uno.
+// El AuthHeader del Header SÍ usa prefijo tem: porque ENIX lo valida así.
 // ---------------------------------------------------------------------
 function buildSoap11(methodName, bodyContent = '') {
-  // Si el body trae contenido, ya viene con tags <type>, <arrival>, etc.
-  // Para que respete el namespace tem:, los reescribimos con el prefijo.
-  // Pero la forma más simple es declarar el namespace en el method element
-  // y dejar el body sin prefijo — el problema NO es el body sino el AuthHeader.
+  // Declaramos xmlns="http://tempuri.org/" en el elemento método para que
+  // <type>, <arrival>, <paxlist>, etc. hereden el namespace automáticamente.
+  // Esto es equivalente a poner <tem:type>...</tem:type> en cada uno pero
+  // mucho más simple de mantener.
   const body = bodyContent
-    ? `<tem:${methodName}>${bodyContent}</tem:${methodName}>`
-    : `<tem:${methodName} />`;
+    ? `<${methodName} xmlns="${ENIX_CONFIG.namespace}">${bodyContent}</${methodName}>`
+    : `<${methodName} xmlns="${ENIX_CONFIG.namespace}" />`;
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
   <soap:Header>
