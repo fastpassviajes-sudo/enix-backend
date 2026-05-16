@@ -506,6 +506,74 @@ app.post('/api/search-legacy', async (req, res) => {
   res.json(result);
 });
  
+// ---------------------------------------------------------------------
+// DEBUG: muestra el XML CRUDO de ENIX para inspección.
+// Útil para descubrir la estructura real de la respuesta cuando el parser
+// devuelve vacío. Soporta cualquier método de Service_Parks.
+// ---------------------------------------------------------------------
+app.post('/api/debug-raw', async (req, res) => {
+  const {
+    method = 'SearchHotel',
+    type = 'Disney',
+    arrival = '2026-08-12',
+    departure = '2026-08-19',
+    adults = 2,
+    children = 0,
+    childAges = [],
+    ticketDays = 4,
+  } = req.body;
+ 
+  const fmtDate = (d) => (d.includes('T') ? d : `${d}T00:00:00`);
+  const childAgesXml = childAges.length > 0
+    ? `<childage>${childAges.map(a => `<int>${parseInt(a)}</int>`).join('')}</childage>`
+    : '<childage></childage>';
+ 
+  let body = '';
+  if (method === 'SearchHotel') {
+    body = `<type>${type}</type>
+<arrival>${fmtDate(arrival)}</arrival>
+<departure>${fmtDate(departure)}</departure>
+<paxlist>
+  <adults>${parseInt(adults)}</adults>
+  <child>${parseInt(children)}</child>
+  ${childAgesXml}
+</paxlist>`;
+  } else if (method === 'SearchHotel_MainRoomResults') {
+    body = `<type>${type}</type>
+<arrival>${fmtDate(arrival)}</arrival>
+<departure>${fmtDate(departure)}</departure>
+<paxlist>
+  <adults>${parseInt(adults)}</adults>
+  <child>${parseInt(children)}</child>
+  ${childAgesXml}
+</paxlist>
+<TicketDays>${parseInt(ticketDays)}</TicketDays>`;
+  } else if (method === 'GetHotelMaster' || method === 'GetPromoMasterDisney') {
+    body = '';
+  } else {
+    return res.status(400).json({ error: `Método no soportado en debug: ${method}` });
+  }
+ 
+  const sentEnvelope = buildSoap11(method, body);
+  const result = await callEnixParks(method, body);
+ 
+  res.json({
+    method,
+    sent: {
+      endpoint: ENIX_CONFIG.parksEndpoint,
+      soapAction: `"${ENIX_CONFIG.namespace}${method}"`,
+      envelope: sentEnvelope,
+    },
+    received: {
+      success: result.success,
+      status: result.status,
+      error: result.error || null,
+      xmlLength: result.data ? result.data.length : 0,
+      xmlRaw: result.data || result.details || null,
+    },
+  });
+});
+ 
 // =====================================================================
 // CLAUDE AI CHAT
 // =====================================================================
