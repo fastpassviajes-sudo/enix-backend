@@ -76,18 +76,25 @@ function extractFirst(xml, tag) {
  
 // ---------------------------------------------------------------------
 // SOAP 1.1 (Service_Parks.asmx)
+// IMPORTANTE: Usamos prefijo "tem:" en todos los elementos del namespace
+// tempuri.org porque ENIX/SOAP UI lo manda así y algunos servicios
+// ASP.NET viejos validan literalmente la sintaxis del prefijo.
 // ---------------------------------------------------------------------
 function buildSoap11(methodName, bodyContent = '') {
+  // Si el body trae contenido, ya viene con tags <type>, <arrival>, etc.
+  // Para que respete el namespace tem:, los reescribimos con el prefijo.
+  // Pero la forma más simple es declarar el namespace en el method element
+  // y dejar el body sin prefijo — el problema NO es el body sino el AuthHeader.
   const body = bodyContent
-    ? `<${methodName} xmlns="${ENIX_CONFIG.namespace}">${bodyContent}</${methodName}>`
-    : `<${methodName} xmlns="${ENIX_CONFIG.namespace}" />`;
+    ? `<tem:${methodName}>${bodyContent}</tem:${methodName}>`
+    : `<tem:${methodName} />`;
   return `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
   <soap:Header>
-    <AuthHeader xmlns="${ENIX_CONFIG.namespace}">
-      <Username>${escapeXml(ENIX_CONFIG.username)}</Username>
-      <Password>${escapeXml(ENIX_CONFIG.password)}</Password>
-    </AuthHeader>
+    <tem:AuthHeader>
+      <tem:Username>${escapeXml(ENIX_CONFIG.username)}</tem:Username>
+      <tem:Password>${escapeXml(ENIX_CONFIG.password)}</tem:Password>
+    </tem:AuthHeader>
   </soap:Header>
   <soap:Body>${body}</soap:Body>
 </soap:Envelope>`;
