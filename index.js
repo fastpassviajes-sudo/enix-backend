@@ -578,6 +578,195 @@ app.post('/api/debug-raw', async (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------
+// SONAR: dispara MUCHAS consultas read-only en paralelo para descubrir
+// qué data hay efectivamente cargada en el ambiente dev de ENIX.
+// Probamos múltiples fechas (pasadas, presentes, futuras), distintos
+// tipos de parque, métodos individuales, GetHotelData, promos, etc.
+// Todas las operaciones son SAFE (no crean ni cancelan nada).
+// ---------------------------------------------------------------------
+app.get('/api/sonar', async (req, res) => {
+  const startedAt = Date.now();
+  const summary = {
+    timestamp: new Date().toISOString(),
+    elapsedMs: null,
+    findings: [],
+    rawResults: {},
+  };
+
+  // Helper: construye body de SearchHotel para una fecha + type dados
+  const buildSearchHotelBody = (type, arrival, departure) => {
+    return `<tem:type>${type}</tem:type>
+<tem:arrival>${arrival}T00:00:00</tem:arrival>
+<tem:departure>${departure}T00:00:00</tem:departure>
+<tem:paxlist>
+  <tem:adults>2</tem:adults>
+  <tem:child>0</tem:child>
+  <tem:childage></tem:childage>
+</tem:paxlist>`;
+  };
+
+  // Helper: extrae info clave de una respuesta SOAP
+  const summarizeResponse = (xml) => {
+    if (!xml) return { empty: true };
+    const totalRecords = extractFirst(xml, 'TotalRecords');
+    const warning = extractFirst(xml, 'warning');
+    const hotelCount = extractTagAll(xml, 'Hotel').length;
+    const promoCount = extractTagAll(xml, 'Promo').length;
+    const fault = extractFirst(xml, 'faultstring') || extractFirst(xml, 'soap:Fault');
+    return {
+      totalRecords: totalRecords ? parseInt(totalRecords) : null,
+      warning: warning ? warning.trim() : null,
+      hotelCount,
+      promoCount,
+      fault: fault || null,
+      length: xml.length,
+    };
+  };
+
+  // ============ BATERÍA DE PRUEBAS ============
+
+  // 1) Múltiples fechas para SearchHotel con type=Disney
+  const datesToProbe = [
+    { label: '2024-10-15 → 2024-10-22', arr: '2024-10-15', dep: '2024-10-22' }, // pasado lejano
+    { label: '2025-03-10 → 2025-03-17', arr: '2025-03-10', dep: '2025-03-17' }, // pasado mediano
+    { label: '2025-12-01 → 2025-12-08', arr: '2025-12-01', dep: '2025-12-08' }, // pasado cercano
+    { label: '2026-05-20 → 2026-05-27', arr: '2026-05-20', dep: '2026-05-27' }, // futuro inmediato
+    { label: '2026-07-15 → 2026-07-22', arr: '2026-07-15', dep: '2026-07-22' }, // futuro 2 meses
+    { label: '2026-11-15 → 2026-11-22', arr: '2026-11-15', dep: '2026-11-22' }, // futuro 6 meses
+    { label: '2027-03-15 → 2027-03-22', arr: '2027-03-15', dep: '2027-03-22' }, // futuro lejano
+  ];
+
+  const searchHotelTests = await Promise.all(
+    datesToProbe.map(async (d) => {
+      const body = buildSearchHotelBody('Disney', d.arr, d.dep);
+      const result = await callEnixParks('SearchHotel', body);
+      return {
+        label: d.label,
+        success: result.success,
+        ...summarizeResponse(result.data),
+      };
+    })
+  );
+  summary.rawResults.searchHotel_Disney_byDate = searchHotelTests;
+
+  // Buscar la que dio resultados (si hay)
+  const winners = searchHotelTests.filter(t => t.totalRecords > 0 || t.hotelCount > 0);
+  if (winners.length > 0) {
+    summary.findings.push(`🎯 SearchHotel encontró data en ${winners.length} fechas: ${winners.map(w => w.label).join(', ')}`);
+  } else {
+    summary.findings.push('⚠️ SearchHotel devolvió 0 resultados para TODAS las fechas probadas (2024 a 2027)');
+  }
+
+  // 2) Lo mismo pero con type=Universal y type=All (con una fecha del medio)
+  const altTypeTests = await Promise.all(
+    ['Universal', 'All'].map(async (type) => {
+      const body = buildSearchHotelBody(type, '2026-07-15', '2026-07-22');
+      const result = await callEnixParks('SearchHotel', body);
+      return { type, success: result.success, ...summarizeResponse(result.data) };
+    })
+  );
+  summary.rawResults.searchHotel_alternativeTypes = altTypeTests;
+
+  // 3) GetPromoMasterDisney (sin parámetros)
+  const promosResult = await callEnixParks('GetPromoMasterDisney');
+  const promosSummary = summarizeResponse(promosResult.data);
+  summary.rawResults.getPromoMasterDisney = {
+    success: promosResult.success,
+    ...promosSummary,
+    rawXml: promosResult.data ? promosResult.data.substring(0, 3000) : null, // primeros 3KB
+  };
+  if (promosSummary.promoCount > 0) {
+    summary.findings.push(`✅ GetPromoMasterDisney: ${promosSummary.promoCount} promos cargadas`);
+  } else {
+    summary.findings.push('⚠️ GetPromoMasterDisney: 0 promos cargadas');
+  }
+
+  // 4) GetHotelData con un hotel Disney conocido (1791 = All Star Movies)
+  const hotelDataResult = await callEnixParks('GetHotelData', `<tem:Id>1791</tem:Id>`);
+  const hotelDataSummary = summarizeResponse(hotelDataResult.data);
+  summary.rawResults.getHotelData_1791 = {
+    success: hotelDataResult.success,
+    ...hotelDataSummary,
+    rawXml: hotelDataResult.data ? hotelDataResult.data.substring(0, 3000) : null,
+  };
+
+  // Buscar si hay rates en la respuesta de GetHotelData
+  if (hotelDataResult.data) {
+    const hasRates = /<rate/i.test(hotelDataResult.data) || /<Rate/.test(hotelDataResult.data);
+    const hasImages = /<image/i.test(hotelDataResult.data);
+    summary.findings.push(`📋 GetHotelData(1791): ${hotelDataResult.data.length} bytes, rates=${hasRates}, images=${hasImages}`);
+  }
+
+  // 5) SearchHotel_Individual con hotelID 1791
+  const individualBody = `<tem:hotelID>1791</tem:hotelID>
+<tem:type>Disney</tem:type>
+<tem:arrival>2026-07-15T00:00:00</tem:arrival>
+<tem:departure>2026-07-22T00:00:00</tem:departure>
+<tem:paxlist>
+  <tem:adults>2</tem:adults>
+  <tem:child>0</tem:child>
+  <tem:childage></tem:childage>
+</tem:paxlist>`;
+  const individualResult = await callEnixParks('SearchHotel_Individual', individualBody);
+  summary.rawResults.searchHotel_Individual_1791 = {
+    success: individualResult.success,
+    ...summarizeResponse(individualResult.data),
+    rawXml: individualResult.data ? individualResult.data.substring(0, 2000) : null,
+  };
+
+  // 6) GetHotelBookingInformation con IDs bajos (1, 2, 3, 100, 1000)
+  // para ver si hay reservas históricas en el sistema
+  const bookingProbes = await Promise.all(
+    [1, 100, 1000, 10000].map(async (id) => {
+      const body = `<tem:Id>${id}</tem:Id>`;
+      const result = await callEnixParks('GetHotelBookingInformation', body);
+      const s = summarizeResponse(result.data);
+      return {
+        bookingId: id,
+        success: result.success,
+        empty: s.length < 600,
+        fault: s.fault,
+        length: s.length,
+        hasContent: /<booking/i.test(result.data || '') || /<reservation/i.test(result.data || ''),
+      };
+    })
+  );
+  summary.rawResults.getHotelBookingInformation_probes = bookingProbes;
+
+  // 7) Probar SearchHotel_MainRoomResults con la misma serie de fechas (con tickets)
+  const ticketsTests = await Promise.all(
+    [
+      { label: '2024-10-15', arr: '2024-10-15', dep: '2024-10-22' },
+      { label: '2026-07-15', arr: '2026-07-15', dep: '2026-07-22' },
+    ].map(async (d) => {
+      const body = `${buildSearchHotelBody('Disney', d.arr, d.dep)}
+<tem:TicketDays>5</tem:TicketDays>`;
+      const result = await callEnixParks('SearchHotel_MainRoomResults', body);
+      return { label: d.label, success: result.success, ...summarizeResponse(result.data) };
+    })
+  );
+  summary.rawResults.searchHotel_MainRoomResults_byDate = ticketsTests;
+  const ticketsWinners = ticketsTests.filter(t => t.totalRecords > 0);
+  if (ticketsWinners.length > 0) {
+    summary.findings.push(`🎯 SearchHotel_MainRoomResults encontró data en: ${ticketsWinners.map(t => t.label).join(', ')}`);
+  }
+
+  // ============ CONCLUSIÓN ============
+  summary.elapsedMs = Date.now() - startedAt;
+
+  // Diagnóstico final
+  const hayDataEnAlgunLado = winners.length > 0 ||
+                              ticketsWinners.length > 0 ||
+                              promosSummary.promoCount > 0;
+
+  summary.conclusion = hayDataEnAlgunLado
+    ? '✅ Hay AL MENOS algo de data cargada en el ambiente. Revisar findings.'
+    : '❌ El ambiente dev parece NO tener tarifas/promos/bookings activas. Confirmar con Víctor.';
+
+  res.json(summary);
+});
+
 // =====================================================================
 // CLAUDE AI CHAT
 // =====================================================================
