@@ -12,14 +12,14 @@
 //   3. Service_Hotels.SearchHotelAdvancedV1 queda como endpoint legacy
 //      por si más adelante querés ofrecer hoteles "no oficiales" de Orlando.
 // =====================================================================
- 
+
 const express = require('express');
 const axios = require('axios');
 const Anthropic = require('@anthropic-ai/sdk');
- 
+
 const app = express();
 app.use(express.json({ limit: '1mb' }));
- 
+
 // ---------------------------------------------------------------------
 // CORS
 // ---------------------------------------------------------------------
@@ -30,7 +30,7 @@ app.use((req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
- 
+
 // ---------------------------------------------------------------------
 // CONFIG
 // ---------------------------------------------------------------------
@@ -43,15 +43,15 @@ const ENIX_CONFIG = {
   margin: parseFloat(process.env.MAGIC_MARGIN || '1.10'),
   orlandoCityId: parseInt(process.env.ORLANDO_CITY_ID || '729'),
 };
- 
+
 const MAGIC_CONFIG = {
   whatsappNumber: process.env.MAGIC_WHATSAPP || '5491121882210',
   claudeModel: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
   claudeMaxTokens: parseInt(process.env.CLAUDE_MAX_TOKENS || '2048'),
 };
- 
+
 const anthropic = new Anthropic();
- 
+
 // ---------------------------------------------------------------------
 // HELPERS XML
 // ---------------------------------------------------------------------
@@ -60,7 +60,7 @@ function escapeXml(str) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
- 
+
 function extractTagAll(xml, tag) {
   const regex = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, 'gi');
   const matches = [];
@@ -68,27 +68,23 @@ function extractTagAll(xml, tag) {
   while ((m = regex.exec(xml)) !== null) matches.push(m[1]);
   return matches;
 }
- 
+
 function extractFirst(xml, tag) {
   const arr = extractTagAll(xml, tag);
   return arr.length > 0 ? arr[0] : null;
 }
- 
+
 // ---------------------------------------------------------------------
 // SOAP 1.1 (Service_Parks.asmx)
-// CLAVE: Todos los elementos del body deben estar bajo el namespace
-// tempuri.org. Lo hacemos declarando xmlns default en el método para que
-// los hijos hereden el namespace sin necesidad de poner tem: en cada uno.
-// El AuthHeader del Header SÍ usa prefijo tem: porque ENIX lo valida así.
+// CLAVE: TODOS los elementos del namespace tempuri.org llevan prefijo tem:
+// (incluído el método y todos sus hijos). Esta es la sintaxis que usa
+// SOAP UI de Víctor y la única que ENIX parsea correctamente.
+// El bodyContent que recibimos YA debe venir con prefijos tem: en cada tag.
 // ---------------------------------------------------------------------
 function buildSoap11(methodName, bodyContent = '') {
-  // Declaramos xmlns="http://tempuri.org/" en el elemento método para que
-  // <type>, <arrival>, <paxlist>, etc. hereden el namespace automáticamente.
-  // Esto es equivalente a poner <tem:type>...</tem:type> en cada uno pero
-  // mucho más simple de mantener.
   const body = bodyContent
-    ? `<${methodName} xmlns="${ENIX_CONFIG.namespace}">${bodyContent}</${methodName}>`
-    : `<${methodName} xmlns="${ENIX_CONFIG.namespace}" />`;
+    ? `<tem:${methodName}>${bodyContent}</tem:${methodName}>`
+    : `<tem:${methodName} />`;
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
   <soap:Header>
@@ -100,7 +96,7 @@ function buildSoap11(methodName, bodyContent = '') {
   <soap:Body>${body}</soap:Body>
 </soap:Envelope>`;
 }
- 
+
 async function callEnixParks(methodName, bodyContent = '') {
   const soapBody = buildSoap11(methodName, bodyContent);
   try {
@@ -121,7 +117,7 @@ async function callEnixParks(methodName, bodyContent = '') {
     };
   }
 }
- 
+
 // ---------------------------------------------------------------------
 // SOAP 1.2 (Service_Hotels.asmx) - legacy, solo para hoteles no Disney/Universal
 // ---------------------------------------------------------------------
@@ -141,7 +137,7 @@ ${bodyContent}
   </soap:Body>
 </soap:Envelope>`;
 }
- 
+
 async function callEnixHotels(methodName, bodyContent = '') {
   const soapBody = buildSoap12(methodName, bodyContent);
   try {
@@ -161,11 +157,11 @@ async function callEnixHotels(methodName, bodyContent = '') {
     };
   }
 }
- 
+
 // ---------------------------------------------------------------------
 // PARSERS
 // ---------------------------------------------------------------------
- 
+
 function parseHotelMasterList(xml) {
   const hotels = extractTagAll(xml, 'Hotel');
   return hotels.map(h => ({
@@ -179,32 +175,32 @@ function parseHotelMasterList(xml) {
     phone: (extractFirst(h, 'phone') || extractFirst(h, 'Phone') || '').trim(),
   })).filter(h => h.hotelId);
 }
- 
+
 // Parser permisivo para SearchHotel / SearchHotel_MainRoomResults.
 // La estructura exacta puede variar; intentamos varios nombres de tag.
 function parseSearchHotelResponse(xml) {
   const totalRecords = parseInt(extractFirst(xml, 'TotalRecords') || extractFirst(xml, 'totalrecords') || '0');
   const hotels = extractTagAll(xml, 'Hotel');
- 
+
   if (hotels.length === 0) {
     return { totalRecords, hotels: [] };
   }
- 
+
   const parsedHotels = hotels.map(h => {
     const hotelId = extractFirst(h, 'Id') || extractFirst(h, 'hotelid') || extractFirst(h, 'HotelID');
     const name = (extractFirst(h, 'Name') || extractFirst(h, 'name') || '').trim();
     const parkType = extractFirst(h, 'ParkType') || extractFirst(h, 'parktype') || null;
- 
+
     const rooms = extractTagAll(h, 'Room');
     const parsedRooms = rooms.map(r => {
       const roomType = (extractFirst(r, 'RoomType') || extractFirst(r, 'roomtype') || '').trim();
       const roomTypeId = extractFirst(r, 'RoomTypeID') || extractFirst(r, 'roomtypeID') || extractFirst(r, 'RoomID');
- 
+
       // Las "opciones" pueden venir como <Option>, <RatePlan> o <Rate>
       let optionBlocks = extractTagAll(r, 'Option');
       if (optionBlocks.length === 0) optionBlocks = extractTagAll(r, 'RatePlan');
       if (optionBlocks.length === 0) optionBlocks = extractTagAll(r, 'Rate');
- 
+
       const parsedOptions = optionBlocks.map(opt => {
         const netCandidates = [
           extractFirst(opt, 'NetTotal'),
@@ -216,7 +212,7 @@ function parseSearchHotelResponse(xml) {
         ].filter(Boolean);
         const netPrice = parseFloat(netCandidates[0] || '0');
         const finalPrice = Math.round(netPrice * ENIX_CONFIG.margin * 100) / 100;
- 
+
         return {
           optionId: extractFirst(opt, 'OptionID') || extractFirst(opt, 'OptionId') || extractFirst(opt, 'Id'),
           rateplan: extractFirst(opt, 'RatePlan') || extractFirst(opt, 'rateplan'),
@@ -229,22 +225,22 @@ function parseSearchHotelResponse(xml) {
           currency: extractFirst(opt, 'Currency') || 'USD',
         };
       });
- 
+
       return { roomType, roomTypeId, options: parsedOptions };
     });
- 
+
     const allPrices = parsedRooms
       .flatMap(r => r.options.map(o => o.finalPrice))
       .filter(p => p > 0);
     const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
- 
+
     return { hotelId, name, parkType, rooms: parsedRooms, minPrice };
   });
- 
+
   const finalTotal = totalRecords || parsedHotels.length;
   return { totalRecords: finalTotal, hotels: parsedHotels };
 }
- 
+
 function parsePromos(xml) {
   const promos = extractTagAll(xml, 'Promo');
   return promos.map(p => ({
@@ -256,36 +252,36 @@ function parsePromos(xml) {
     discount: extractFirst(p, 'Discount') || extractFirst(p, 'DiscountPercent'),
   }));
 }
- 
+
 // ---------------------------------------------------------------------
 // CACHE de hoteles Disney/Universal
 // ---------------------------------------------------------------------
 let hotelsCache = { data: null, timestamp: 0 };
 const HOTELS_CACHE_TTL = 60 * 60 * 1000;
- 
+
 async function getHotelsList({ force = false } = {}) {
   if (!force && hotelsCache.data && Date.now() - hotelsCache.timestamp < HOTELS_CACHE_TTL) {
     return hotelsCache.data;
   }
- 
+
   // GetHotelMaster en Service_Parks NO requiere parámetros (segun WSDL: <complexType/>).
   const result = await callEnixParks('GetHotelMaster');
   if (!result.success) {
     console.warn('[CACHE] GetHotelMaster falló');
     return hotelsCache.data || null;
   }
- 
+
   const hotels = parseHotelMasterList(result.data);
   if (hotels.length === 0) {
     console.warn('[CACHE] GetHotelMaster devolvió 0 hoteles');
     return hotelsCache.data || null;
   }
- 
+
   hotelsCache = { data: hotels, timestamp: Date.now() };
   console.log(`[CACHE] Refrescado con ${hotels.length} hoteles`);
   return hotels;
 }
- 
+
 function filterByPark(hotels, parque) {
   if (!parque || parque === 'All') return hotels;
   const target = parque.toLowerCase();
@@ -294,7 +290,7 @@ function filterByPark(hotels, parque) {
     return h.parkType.toLowerCase().includes(target);
   });
 }
- 
+
 // ---------------------------------------------------------------------
 // NUEVO: SearchHotel sobre Service_Parks (sin tickets)
 // ---------------------------------------------------------------------
@@ -308,21 +304,21 @@ async function searchHotelSimple({
 }) {
   const fmtDate = (d) => (d.includes('T') ? d : `${d}T00:00:00`);
   const childAgesXml = childAges.length > 0
-    ? `<childage>${childAges.map(a => `<int>${parseInt(a)}</int>`).join('')}</childage>`
-    : '<childage></childage>';
- 
-  const body = `<type>${type}</type>
-<arrival>${fmtDate(arrival)}</arrival>
-<departure>${fmtDate(departure)}</departure>
-<paxlist>
-  <adults>${parseInt(adults)}</adults>
-  <child>${parseInt(children)}</child>
+    ? `<tem:childage>${childAges.map(a => `<tem:int>${parseInt(a)}</tem:int>`).join('')}</tem:childage>`
+    : '<tem:childage></tem:childage>';
+
+  const body = `<tem:type>${type}</tem:type>
+<tem:arrival>${fmtDate(arrival)}</tem:arrival>
+<tem:departure>${fmtDate(departure)}</tem:departure>
+<tem:paxlist>
+  <tem:adults>${parseInt(adults)}</tem:adults>
+  <tem:child>${parseInt(children)}</tem:child>
   ${childAgesXml}
-</paxlist>`;
- 
+</tem:paxlist>`;
+
   const result = await callEnixParks('SearchHotel', body);
   if (!result.success) return result;
- 
+
   const parsed = parseSearchHotelResponse(result.data);
   return {
     success: true,
@@ -332,7 +328,7 @@ async function searchHotelSimple({
     note: 'Precios en finalPrice ya incluyen el margen del 10% de Magic Travelers',
   };
 }
- 
+
 // ---------------------------------------------------------------------
 // NUEVO: SearchHotel_MainRoomResults sobre Service_Parks (con tickets)
 // ---------------------------------------------------------------------
@@ -347,22 +343,22 @@ async function searchHotelWithTickets({
 }) {
   const fmtDate = (d) => (d.includes('T') ? d : `${d}T00:00:00`);
   const childAgesXml = childAges.length > 0
-    ? `<childage>${childAges.map(a => `<int>${parseInt(a)}</int>`).join('')}</childage>`
-    : '<childage></childage>';
- 
-  const body = `<type>${type}</type>
-<arrival>${fmtDate(arrival)}</arrival>
-<departure>${fmtDate(departure)}</departure>
-<paxlist>
-  <adults>${parseInt(adults)}</adults>
-  <child>${parseInt(children)}</child>
+    ? `<tem:childage>${childAges.map(a => `<tem:int>${parseInt(a)}</tem:int>`).join('')}</tem:childage>`
+    : '<tem:childage></tem:childage>';
+
+  const body = `<tem:type>${type}</tem:type>
+<tem:arrival>${fmtDate(arrival)}</tem:arrival>
+<tem:departure>${fmtDate(departure)}</tem:departure>
+<tem:paxlist>
+  <tem:adults>${parseInt(adults)}</tem:adults>
+  <tem:child>${parseInt(children)}</tem:child>
   ${childAgesXml}
-</paxlist>
-<TicketDays>${parseInt(ticketDays)}</TicketDays>`;
- 
+</tem:paxlist>
+<tem:TicketDays>${parseInt(ticketDays)}</tem:TicketDays>`;
+
   const result = await callEnixParks('SearchHotel_MainRoomResults', body);
   if (!result.success) return result;
- 
+
   const parsed = parseSearchHotelResponse(result.data);
   return {
     success: true,
@@ -373,13 +369,13 @@ async function searchHotelWithTickets({
     note: 'Precios incluyen hotel + tickets de parque, con margen 10% Magic Travelers',
   };
 }
- 
+
 // ---------------------------------------------------------------------
 // NUEVO: GetPromoMasterDisney
 // ---------------------------------------------------------------------
 let promosCache = { data: null, timestamp: 0 };
 const PROMOS_CACHE_TTL = 6 * 60 * 60 * 1000;
- 
+
 async function getPromosDisney({ force = false } = {}) {
   if (!force && promosCache.data && Date.now() - promosCache.timestamp < PROMOS_CACHE_TTL) {
     return promosCache.data;
@@ -390,7 +386,7 @@ async function getPromosDisney({ force = false } = {}) {
   promosCache = { data: promos, timestamp: Date.now() };
   return promos;
 }
- 
+
 // ---------------------------------------------------------------------
 // LEGACY: Service_Hotels.SearchHotelAdvancedV1
 // ---------------------------------------------------------------------
@@ -407,7 +403,7 @@ async function searchHotelsAdvancedLegacy({
   const hotelListXml = hotelList.length > 0
     ? hotelList.map(id => `<tem:int>${parseInt(id)}</tem:int>`).join('')
     : '';
- 
+
   const body = `      <tem:cityid>${parseInt(cityId)}</tem:cityid>
       <tem:arrival>${fmtDate(arrival)}</tem:arrival>
       <tem:departure>${fmtDate(departure)}</tem:departure>
@@ -419,14 +415,14 @@ ${childAgesXml}
       </tem:paxlist>
       <tem:availableonly>${parseInt(availableOnly)}</tem:availableonly>
       <tem:hotellist>${hotelListXml}</tem:hotellist>`;
- 
+
   return await callEnixHotels('SearchHotelAdvancedV1', body);
 }
- 
+
 // =====================================================================
 // ENDPOINTS REST
 // =====================================================================
- 
+
 app.get('/', (req, res) => {
   res.json({
     service: 'Magic Travelers Backend',
@@ -445,7 +441,7 @@ app.get('/', (req, res) => {
     ],
   });
 });
- 
+
 app.get('/api/diag', async (req, res) => {
   const cached = hotelsCache.data;
   const cacheAge = hotelsCache.timestamp ? Date.now() - hotelsCache.timestamp : null;
@@ -468,7 +464,7 @@ app.get('/api/diag', async (req, res) => {
     },
   });
 });
- 
+
 app.get('/api/hotels-list', async (req, res) => {
   const force = req.query.force === '1' || req.query.force === 'true';
   const hotels = await getHotelsList({ force });
@@ -478,7 +474,7 @@ app.get('/api/hotels-list', async (req, res) => {
   const parkTypes = [...new Set(hotels.map(h => h.parkType).filter(Boolean))];
   res.json({ success: true, count: hotels.length, parkTypes, hotels });
 });
- 
+
 app.post('/api/search-simple', async (req, res) => {
   const { type = 'All', arrival, departure, adults = 2, children = 0, childAges = [] } = req.body;
   if (!arrival || !departure) {
@@ -487,7 +483,7 @@ app.post('/api/search-simple', async (req, res) => {
   const result = await searchHotelSimple({ type, arrival, departure, adults, children, childAges });
   res.json(result);
 });
- 
+
 app.post('/api/search-with-tickets', async (req, res) => {
   const { type = 'All', arrival, departure, adults = 2, children = 0, childAges = [], ticketDays = 4 } = req.body;
   if (!arrival || !departure) {
@@ -496,12 +492,12 @@ app.post('/api/search-with-tickets', async (req, res) => {
   const result = await searchHotelWithTickets({ type, arrival, departure, adults, children, childAges, ticketDays });
   res.json(result);
 });
- 
+
 app.get('/api/promos-disney', async (req, res) => {
   const promos = await getPromosDisney();
   res.json({ success: true, count: promos.length, promos });
 });
- 
+
 app.post('/api/search-legacy', async (req, res) => {
   const { cityId, arrival, departure, adults = 2, children = 0, childAges = [], qty = 1, hotelList = [] } = req.body;
   if (!arrival || !departure) {
@@ -513,7 +509,7 @@ app.post('/api/search-legacy', async (req, res) => {
   });
   res.json(result);
 });
- 
+
 // ---------------------------------------------------------------------
 // DEBUG: muestra el XML CRUDO de ENIX para inspección.
 // Útil para descubrir la estructura real de la respuesta cuando el parser
@@ -530,41 +526,41 @@ app.post('/api/debug-raw', async (req, res) => {
     childAges = [],
     ticketDays = 4,
   } = req.body;
- 
+
   const fmtDate = (d) => (d.includes('T') ? d : `${d}T00:00:00`);
   const childAgesXml = childAges.length > 0
-    ? `<childage>${childAges.map(a => `<int>${parseInt(a)}</int>`).join('')}</childage>`
-    : '<childage></childage>';
- 
+    ? `<tem:childage>${childAges.map(a => `<tem:int>${parseInt(a)}</tem:int>`).join('')}</tem:childage>`
+    : '<tem:childage></tem:childage>';
+
   let body = '';
   if (method === 'SearchHotel') {
-    body = `<type>${type}</type>
-<arrival>${fmtDate(arrival)}</arrival>
-<departure>${fmtDate(departure)}</departure>
-<paxlist>
-  <adults>${parseInt(adults)}</adults>
-  <child>${parseInt(children)}</child>
+    body = `<tem:type>${type}</tem:type>
+<tem:arrival>${fmtDate(arrival)}</tem:arrival>
+<tem:departure>${fmtDate(departure)}</tem:departure>
+<tem:paxlist>
+  <tem:adults>${parseInt(adults)}</tem:adults>
+  <tem:child>${parseInt(children)}</tem:child>
   ${childAgesXml}
-</paxlist>`;
+</tem:paxlist>`;
   } else if (method === 'SearchHotel_MainRoomResults') {
-    body = `<type>${type}</type>
-<arrival>${fmtDate(arrival)}</arrival>
-<departure>${fmtDate(departure)}</departure>
-<paxlist>
-  <adults>${parseInt(adults)}</adults>
-  <child>${parseInt(children)}</child>
+    body = `<tem:type>${type}</tem:type>
+<tem:arrival>${fmtDate(arrival)}</tem:arrival>
+<tem:departure>${fmtDate(departure)}</tem:departure>
+<tem:paxlist>
+  <tem:adults>${parseInt(adults)}</tem:adults>
+  <tem:child>${parseInt(children)}</tem:child>
   ${childAgesXml}
-</paxlist>
-<TicketDays>${parseInt(ticketDays)}</TicketDays>`;
+</tem:paxlist>
+<tem:TicketDays>${parseInt(ticketDays)}</tem:TicketDays>`;
   } else if (method === 'GetHotelMaster' || method === 'GetPromoMasterDisney') {
     body = '';
   } else {
     return res.status(400).json({ error: `Método no soportado en debug: ${method}` });
   }
- 
+
   const sentEnvelope = buildSoap11(method, body);
   const result = await callEnixParks(method, body);
- 
+
   res.json({
     method,
     sent: {
@@ -581,19 +577,19 @@ app.post('/api/debug-raw', async (req, res) => {
     },
   });
 });
- 
+
 // =====================================================================
 // CLAUDE AI CHAT
 // =====================================================================
- 
+
 const SYSTEM_PROMPT = `Sos el asesor de viajes de Magic Travelers, una agencia argentina especializada en Disney y Universal Orlando.
- 
+
 # Tu personalidad
 - Cálido y profesional, como Pablo, Noe o Maru — los humanos que atienden Magic Travelers.
 - Hablás natural, sin emojis a cascotazos, sin "¡Hola amig@!". Tono argentino si el cliente escribe en español rioplatense.
 - Detectás automáticamente el idioma del cliente (español, inglés, portugués) y respondés siempre en el mismo idioma.
 - Sos experto en Disney y Universal: hoteles, tickets, dining plans, mejores épocas, edades, etc.
- 
+
 # Tu flujo de trabajo
 1. Saludá brevemente y preguntá qué necesita.
 2. Hacé preguntas cortas para entender: destino (Disney/Universal/ambos), fechas, cantidad de adultos y niños (con edades).
@@ -604,21 +600,21 @@ const SYSTEM_PROMPT = `Sos el asesor de viajes de Magic Travelers, una agencia a
    - Si pregunta por descuentos/promos → usá \`obtener_promos_disney\`.
 4. Mostrá 2-3 opciones que se ajusten al perfil del cliente (NO abrumes con 35 hoteles).
 5. Cuando esté listo para cerrar, usá \`generar_link_whatsapp\` para pasarlo a un humano.
- 
+
 # REGLAS CRÍTICAS que NUNCA rompas
 - NUNCA inventes precios. Si una tool no devuelve precio, derivá a WhatsApp.
 - Los precios que devuelven las tools YA TIENEN el margen del 10% incluido. Mostralos tal cual, NO sumes nada.
 - NUNCA prometas disponibilidad que no validaste con las tools.
 - Si una tool devuelve 0 resultados o error, NO digas "no hay disponibilidad" — derivá a WhatsApp con todos los datos.
 - Si el cliente pregunta por destinos que NO son Disney/Universal Orlando, decile amablemente que en chat sólo manejás esos dos, y derivalo a WhatsApp.
- 
+
 # Cómo decidir entre las dos tools de búsqueda
 - "Quiero un hotel cerca de Disney" → \`buscar_hoteles_simple\` (no menciona tickets)
 - "Quiero ir 5 días a Disney" → \`buscar_hoteles_con_tickets\` con ticketDays=5
 - "Quiero el paquete completo con tickets para Universal" → \`buscar_hoteles_con_tickets\` con type=Universal
 - "Cuánto sale el All Star Music sólo el hotel" → \`buscar_hoteles_simple\`
 - Si dudás, preguntale al cliente si quiere "sólo hotel" o "hotel + tickets de parque"
- 
+
 # Info útil sobre Disney/Universal
 - Disney Value (~$130-180/noche): All Star Movies, All Star Music, All Star Sports, Pop Century, Art of Animation
 - Disney Moderate (~$200-280/noche): Caribbean Beach, Port Orleans, Coronado Springs
@@ -629,9 +625,9 @@ const SYSTEM_PROMPT = `Sos el asesor de viajes de Magic Travelers, una agencia a
 - Universal Premier con Express Pass GRATIS (~$380-500/noche): Royal Pacific, Hard Rock, Portofino Bay
 - Mejor época Disney: enero-febrero, mayo, septiembre-octubre. Evitar vacaciones americanas.
 - Magic Travelers cobra 10% sobre tarifas mayoristas, aún así sale ~25% más barato que Disney directo.
- 
+
 Sé útil, sé conciso, derivá a WhatsApp cuando dudes.`;
- 
+
 const tools = [
   {
     name: 'listar_hoteles',
@@ -701,10 +697,10 @@ const tools = [
     },
   },
 ];
- 
+
 async function executeTool(toolName, toolInput) {
   console.log(`[TOOL] ${toolName}`, JSON.stringify(toolInput));
- 
+
   try {
     if (toolName === 'listar_hoteles') {
       const all = await getHotelsList();
@@ -717,26 +713,26 @@ async function executeTool(toolName, toolInput) {
         hoteles: filtered.map(h => ({ id: h.hotelId, nombre: h.name, parque: h.parkType })),
       };
     }
- 
+
     if (toolName === 'buscar_hoteles_simple') {
       const { parque, check_in, check_out, adultos, ninos = 0, edades_ninos = [] } = toolInput;
       const result = await searchHotelSimple({
         type: parque, arrival: check_in, departure: check_out,
         adults: adultos, children: ninos, childAges: edades_ninos,
       });
- 
+
       if (!result.success) {
         return { aviso: 'Error técnico. NO le digas al cliente "no hay" — derivá a WhatsApp.', error_tecnico: result.error };
       }
       if (result.totalRecords === 0 || result.hotels.length === 0) {
         return { aviso: 'Sin resultados. NO le digas "no hay disponibilidad" — derivá a WhatsApp con todos los datos.', cantidad: 0 };
       }
- 
+
       const top = result.hotels
         .filter(h => h.minPrice > 0)
         .sort((a, b) => a.minPrice - b.minPrice)
         .slice(0, 6);
- 
+
       return {
         metodo: result.method,
         total_disponibles: result.totalRecords,
@@ -756,7 +752,7 @@ async function executeTool(toolName, toolInput) {
         nota: 'Precios finales con margen Magic Travelers. NO sumes nada.',
       };
     }
- 
+
     if (toolName === 'buscar_hoteles_con_tickets') {
       const { parque, check_in, check_out, adultos, ninos = 0, edades_ninos = [], dias_de_parque } = toolInput;
       const result = await searchHotelWithTickets({
@@ -764,19 +760,19 @@ async function executeTool(toolName, toolInput) {
         adults: adultos, children: ninos, childAges: edades_ninos,
         ticketDays: dias_de_parque,
       });
- 
+
       if (!result.success) {
         return { aviso: 'Error técnico. NO le digas "no hay" — derivá a WhatsApp.', error_tecnico: result.error };
       }
       if (result.totalRecords === 0 || result.hotels.length === 0) {
         return { aviso: 'Sin resultados para ese paquete. NO le digas "no hay" — derivá a WhatsApp.', cantidad: 0 };
       }
- 
+
       const top = result.hotels
         .filter(h => h.minPrice > 0)
         .sort((a, b) => a.minPrice - b.minPrice)
         .slice(0, 6);
- 
+
       return {
         metodo: result.method,
         dias_parque: result.ticketDays,
@@ -798,7 +794,7 @@ async function executeTool(toolName, toolInput) {
         nota: 'Precios paquete completo (hotel + tickets), margen ya incluido.',
       };
     }
- 
+
     if (toolName === 'obtener_promos_disney') {
       const promos = await getPromosDisney();
       if (!promos || promos.length === 0) {
@@ -814,7 +810,7 @@ async function executeTool(toolName, toolInput) {
         })),
       };
     }
- 
+
     if (toolName === 'generar_link_whatsapp') {
       const { resumen, idioma = 'es' } = toolInput;
       const greeting = {
@@ -826,36 +822,36 @@ async function executeTool(toolName, toolInput) {
       const url = `https://wa.me/${MAGIC_CONFIG.whatsappNumber}?text=${encodeURIComponent(fullMessage)}`;
       return { url };
     }
- 
+
     return { error: `Tool desconocida: ${toolName}` };
   } catch (e) {
     console.error('[TOOL ERROR]', toolName, e.message);
     return { error: `Error ejecutando ${toolName}: ${e.message}` };
   }
 }
- 
+
 app.post('/api/chat', async (req, res) => {
   const { messages = [] } = req.body;
- 
+
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ success: false, error: 'messages es requerido (array)' });
   }
   if (!process.env.ANTHROPIC_API_KEY) {
     return res.status(500).json({ success: false, error: 'ANTHROPIC_API_KEY no configurada' });
   }
- 
+
   const history = messages.map(m => ({
     role: m.role === 'assistant' ? 'assistant' : 'user',
     content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
   }));
- 
+
   try {
     let iterations = 0;
     const maxIterations = 6;
- 
+
     while (iterations < maxIterations) {
       iterations++;
- 
+
       const response = await anthropic.messages.create({
         model: MAGIC_CONFIG.claudeModel,
         max_tokens: MAGIC_CONFIG.claudeMaxTokens,
@@ -863,7 +859,7 @@ app.post('/api/chat', async (req, res) => {
         tools,
         messages: history,
       });
- 
+
       if (response.stop_reason === 'tool_use') {
         const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
         const toolResults = await Promise.all(
@@ -876,21 +872,21 @@ app.post('/api/chat', async (req, res) => {
         history.push({ role: 'user', content: toolResults });
         continue;
       }
- 
+
       const textBlocks = response.content.filter(b => b.type === 'text');
       const finalText = textBlocks.map(b => b.text).join('\n').trim();
- 
+
       return res.json({ success: true, message: finalText, usage: response.usage, iterations });
     }
- 
+
     return res.status(500).json({ success: false, error: 'Max iterations alcanzado' });
- 
+
   } catch (error) {
     console.error('[CHAT ERROR]', error);
     return res.status(500).json({ success: false, error: error.message, type: error.type || 'unknown' });
   }
 });
- 
+
 // =====================================================================
 // ARRANQUE
 // =====================================================================
@@ -900,7 +896,7 @@ app.listen(PORT, async () => {
   console.log(`Parks endpoint:  ${ENIX_CONFIG.parksEndpoint}`);
   console.log(`Hotels endpoint: ${ENIX_CONFIG.hotelsEndpoint}`);
   console.log(`Claude model:    ${MAGIC_CONFIG.claudeModel}`);
- 
+
   console.log('[STARTUP] Precalentando cache de hoteles...');
   const hotels = await getHotelsList();
   if (hotels) {
